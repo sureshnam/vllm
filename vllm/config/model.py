@@ -1218,8 +1218,12 @@ class ModelConfig:
             if attn_type_list:
                 return sum(t == 1 for t in attn_type_list[start:end])
 
-            # Hybrid model Qwen3Next
-            layer_types_value = getattr(self.hf_config, "layer_types", None)
+            # Hybrid model Qwen3Next / Qwen3.5 MoE
+            # Use hf_text_config: layer_types is a text-model property that
+            # lives on text_config for multimodal models.
+            layer_types_value = getattr(
+                self.hf_text_config, "layer_types", None
+            )
             if layer_types_value is not None:
                 if block_type == "attention":
                     return sum(
@@ -1431,7 +1435,7 @@ class ModelConfig:
             return False
         # Handle granite-4.0-micro case which uses hybrid config but does not
         # actually contain any non-attention layers.
-        layer_types = getattr(self.hf_config, "layer_types", None)
+        layer_types = getattr(self.hf_text_config, "layer_types", None)
         return layer_types is None or not all(
             layer == "attention" for layer in layer_types
         )

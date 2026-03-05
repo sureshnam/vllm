@@ -300,12 +300,18 @@ class Qwen3NextGatedDeltaNet(nn.Module, MambaBase):
             quant_config=quant_config,
             prefix=f"{prefix}.in_proj_qkvz",
         )
-        # ba_proj doesn't support blockwise fp8 quantization.
+        # ba_proj doesn't support blockwise fp8 quantization
+        # because its output dimension is too small for the block size.
+        ba_quant_config = quant_config
+        if (quant_config is not None
+                and getattr(quant_config, "weight_block_size", None)
+                is not None):
+            ba_quant_config = None
         self.in_proj_ba = ColumnParallelLinear(
             input_size=self.hidden_size,
             output_size=self.projection_size_ba,
             bias=False,
-            quant_config=quant_config,
+            quant_config=ba_quant_config,
             prefix=f"{prefix}.in_proj_ba",
         )
 
@@ -601,6 +607,20 @@ class Qwen3NextGatedDeltaNet(nn.Module, MambaBase):
             mixed_qkv_non_spec
         )
 
+        # GQA: expand q/k heads to match v heads for recurrence
+        # q/k have H_k = num_k_heads // tp, v has H_v = num_v_heads // tp
+        gqa_ratio = self.num_v_heads // self.num_k_heads
+        if gqa_ratio > 1:
+            def _expand_qk(t):
+                if t is None:
+                    return None
+                # t: (1, T, H_k, D) -> (1, T, H_v, D)
+                return t.repeat_interleave(gqa_ratio, dim=2)
+            query_spec = _expand_qk(query_spec)
+            key_spec = _expand_qk(key_spec)
+            query_non_spec = _expand_qk(query_non_spec)
+            key_non_spec = _expand_qk(key_non_spec)
+
         g, beta = fused_gdn_gating(self.A_log, a, b, self.dt_bias)
 
         if spec_sequence_masks is not None:
@@ -641,6 +661,16 @@ class Qwen3NextGatedDeltaNet(nn.Module, MambaBase):
             core_attn_out_spec, last_recurrent_state = None, None
 
         # 2.2: Process the remaining part
+        # Get CPU versions for HPU compatibility
+        _cpu_qsl = getattr(attn_metadata, 'non_spec_query_start_loc_cpu', None)
+        _cpu_state_idx = getattr(attn_metadata, 'non_spec_state_indices_cpu', None)
+        # Force graph compilation before recurrence to avoid n_ac compile errors
+        try:
+            import habana_frameworks.torch as htorch
+            htorch.core.mark_step()
+            torch.hpu.synchronize()
+        except Exception:
+            pass
         if attn_metadata.num_prefills > 0:
             initial_state = ssm_state[non_spec_state_indices_tensor].contiguous()
             initial_state[~has_initial_state, ...] = 0
@@ -658,12 +688,17 @@ class Qwen3NextGatedDeltaNet(nn.Module, MambaBase):
                 cu_seqlens=non_spec_query_start_loc,
                 head_first=False,
                 use_qk_l2norm_in_kernel=True,
+                cu_seqlens_cpu=_cpu_qsl,
             )
             # Init cache
             ssm_state[non_spec_state_indices_tensor] = last_recurrent_state.to(
                 ssm_state.dtype
             )
         elif attn_metadata.num_decodes > 0:
+            _cpu_qsl_decode = _cpu_qsl[:attn_metadata.num_decodes + 1] \
+                if _cpu_qsl is not None else None
+            _cpu_state_idx_decode = _cpu_state_idx[:attn_metadata.num_decodes] \
+                if _cpu_state_idx is not None else None
             core_attn_out_non_spec, last_recurrent_state = (
                 fused_recurrent_gated_delta_rule(
                     q=query_non_spec,
@@ -678,6 +713,8 @@ class Qwen3NextGatedDeltaNet(nn.Module, MambaBase):
                     ],
                     ssm_state_indices=non_spec_state_indices_tensor,
                     use_qk_l2norm_in_kernel=True,
+                    cu_seqlens_cpu=_cpu_qsl_decode,
+                    ssm_state_indices_cpu=_cpu_state_idx_decode,
                 )
             )
         else:

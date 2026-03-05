@@ -59,6 +59,11 @@ class GDNAttentionMetadata:
 
     num_accepted_tokens: torch.Tensor | None = None  # shape: [batch,]
 
+    # CPU versions for HPU compatibility (avoids HPU->CPU transfers)
+    non_spec_query_start_loc_cpu: torch.Tensor | None = None
+    non_spec_state_indices_cpu: torch.Tensor | None = None
+    has_initial_state_cpu: torch.Tensor | None = None
+
     # The following attributes are for triton implementation of causal_conv1d
     nums_dict: dict | None = None
     batch_ptr: torch.Tensor | None = None
@@ -381,6 +386,7 @@ class GDNAttentionMetadataBuilder(AttentionMetadataBuilder[GDNAttentionMetadata]
             spec_token_indx=spec_token_indx,
             non_spec_token_indx=non_spec_token_indx,
             num_accepted_tokens=num_accepted_tokens,
+            non_spec_query_start_loc_cpu=non_spec_query_start_loc_cpu,
             nums_dict=nums_dict,
             batch_ptr=batch_ptr,
             token_chunk_offset_ptr=token_chunk_offset_ptr,

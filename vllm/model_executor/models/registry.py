@@ -187,6 +187,8 @@ _TEXT_GENERATION_MODELS = {
     "Qwen2MoeForCausalLM": ("qwen2_moe", "Qwen2MoeForCausalLM"),
     "Qwen3ForCausalLM": ("qwen3", "Qwen3ForCausalLM"),
     "Qwen3MoeForCausalLM": ("qwen3_moe", "Qwen3MoeForCausalLM"),
+    "Qwen3_5MoeForCausalLM": ("qwen3_5_moe", "Qwen3_5MoeForCausalLM"),
+    "Qwen3_5MoeForConditionalGeneration": ("qwen3_5_moe", "Qwen3_5MoeForCausalLM"),
     "RWForCausalLM": ("falcon", "FalconForCausalLM"),
     "SeedOssForCausalLM": ("seed_oss", "SeedOssForCausalLM"),
     "Step1ForCausalLM": ("step1", "Step1ForCausalLM"),
